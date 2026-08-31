@@ -1,0 +1,10 @@
+{
+  "name": "Noor — Daily Reflections",
+  "short_name": "Noor",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0A211C",
+  "theme_color": "#0A211C",
+  "orientation": "portrait"
+}
