@@ -69,12 +69,14 @@ async function fetchTimings(date){
 
 export default async () => {
   if(!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY){
+    console.log('VAPID keys not configured');
     return new Response('VAPID keys not configured', { status: 500 });
   }
 
   const subStore = getStore('push-subscriptions');
   const subscription = await subStore.get('subscription', { type: 'json' });
   if(!subscription){
+    console.log('No subscription yet');
     return new Response('No subscription yet', { status: 200 });
   }
 
@@ -85,10 +87,11 @@ export default async () => {
   try{
     timings = await fetchTimings(today);
   }catch(err){
+    console.log('Could not fetch prayer times: ' + err.message);
     return new Response('Could not fetch prayer times: ' + err.message, { status: 502 });
   }
 
-  const maghrib = timeOnDate(today, timings.Maghrib, TZ);
+  const maghrib = addMinutes(timeOnDate(today, timings.Maghrib, TZ), 4);
   const prayerTimes = {
     Fajr: timeOnDate(today, timings.Fajr, TZ),
     Dhuhr: timeOnDate(today, timings.Dhuhr, TZ),
@@ -98,6 +101,7 @@ export default async () => {
   };
 
   const dayKey = fmtDateISO(today);
+  console.log('Now:', now.toISOString(), '| Times:', Object.fromEntries(Object.entries(prayerTimes).map(([k,v])=>[k,v.toISOString()])));
   const stateStore = getStore('notify-state');
   let sentToday = (await stateStore.get(dayKey, { type: 'json' })) || {};
 
@@ -134,7 +138,9 @@ export default async () => {
 
   await stateStore.setJSON(dayKey, sentToday);
 
-  return new Response(results.join('; ') || 'Nothing due', { status: 200 });
+  const summary = results.join('; ') || 'Nothing due';
+  console.log(summary);
+  return new Response(summary, { status: 200 });
 };
 
 export const config = {
