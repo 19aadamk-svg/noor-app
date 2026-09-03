@@ -5,40 +5,47 @@
 // This app has exactly one intended user, so we keep this deliberately
 // simple: one fixed key holding one subscription. If it's ever opened from
 // a second device, that subscription just replaces the stored one.
+//
+// Written as a Netlify v2 function (export default) — the v1 CommonJS
+// format (exports.handler) doesn't reliably get automatic Netlify Blobs
+// context injected, which caused MissingBlobsEnvironmentError.
 
-const { getStore } = require('@netlify/blobs');
+import { getStore } from '@netlify/blobs';
 
-exports.handler = async (event) => {
+export default async (req) => {
   const store = getStore('push-subscriptions');
 
-  if (event.httpMethod === 'DELETE') {
+  if (req.method === 'DELETE') {
     try {
       await store.delete('subscription');
-      return { statusCode: 200, body: JSON.stringify({ ok: true }) };
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
     } catch (err) {
-      return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
+      console.log('Delete failed:', err.message);
+      return new Response(JSON.stringify({ error: err.message }), { status: 500 });
     }
   }
 
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: 'Method Not Allowed' };
+  if (req.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405 });
   }
 
   let subscription;
   try {
-    subscription = JSON.parse(event.body);
+    subscription = await req.json();
   } catch (e) {
-    return { statusCode: 400, body: 'Invalid JSON' };
+    return new Response('Invalid JSON', { status: 400 });
   }
 
   if (!subscription || !subscription.endpoint) {
-    return { statusCode: 400, body: 'Missing subscription endpoint' };
+    return new Response('Missing subscription endpoint', { status: 400 });
   }
 
   try {
     await store.setJSON('subscription', subscription);
-    return { statusCode: 200, body: JSON.stringify({ ok: true }) };
+    console.log('Subscription saved:', subscription.endpoint);
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
   } catch (err) {
-    return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
+    console.log('Save failed:', err.message);
+    return new Response(JSON.stringify({ error: err.message }), { status: 500 });
   }
 };
