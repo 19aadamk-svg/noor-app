@@ -40,27 +40,9 @@ function timeOnDate(baseDate, hhmm, tz){
 
 function addMinutes(d, mins){ return new Date(d.getTime() + mins*60000); }
 
-const ISHA_OFFSET_MIN = {
-  '08-01':60,'08-02':60,'08-03':60,'08-04':60,'08-05':60,'08-06':60,'08-07':60,
-  '08-08':60,'08-09':60,'08-10':60,'08-11':60,'08-12':60,'08-13':60,'08-14':60,
-  '08-15':60,'08-16':60,'08-17':60,'08-18':60,'08-19':60,'08-20':60,'08-21':60,
-  '08-22':60,'08-23':60,'08-24':60,'08-25':60,'08-26':60,'08-27':60,'08-28':60,
-  '08-29':60,'08-30':60,'08-31':60,
-  '09-01':60,'09-02':60,'09-03':60,'09-04':60,'09-05':60,'09-06':60,'09-07':60,
-  '09-08':60,'09-09':60,'09-10':60,'09-11':61,'09-12':60,'09-13':62,'09-14':64,
-  '09-15':63,'09-16':63,'09-17':63,'09-18':63,'09-19':64,'09-20':64,'09-21':64,
-  '09-22':65,'09-23':65,'09-24':65,'09-25':65,'09-26':65,'09-27':65,'09-28':65,
-  '09-29':65,'09-30':65
-};
-function ishaOffsetFor(date){
-  const mm = String(date.getMonth()+1).padStart(2,'0');
-  const dd = String(date.getDate()).padStart(2,'0');
-  return ISHA_OFFSET_MIN[`${mm}-${dd}`] ?? 60;
-}
-
 async function fetchTimings(date){
   const iso = fmtDateISO(date);
-  const url = `https://api.aladhan.com/v1/timings/${iso}?latitude=${LAT}&longitude=${LON}&method=2&school=1&latitudeAdjustmentMethod=1&timezonestring=${encodeURIComponent(TZ)}`;
+  const url = `https://api.aladhan.com/v1/timings/${iso}?latitude=${LAT}&longitude=${LON}&method=99&methodSettings=18,null,12&school=0&latitudeAdjustmentMethod=1&timezonestring=${encodeURIComponent(TZ)}`;
   const res = await fetch(url);
   if(!res.ok) throw new Error('Prayer time service unavailable');
   const data = await res.json();
@@ -91,13 +73,12 @@ export default async () => {
     return new Response('Could not fetch prayer times: ' + err.message, { status: 502 });
   }
 
-  const maghrib = addMinutes(timeOnDate(today, timings.Maghrib, TZ), 4);
   const prayerTimes = {
-    Fajr: timeOnDate(today, timings.Fajr, TZ),
+    Fajr: addMinutes(timeOnDate(today, timings.Fajr, TZ), 20),
     Dhuhr: timeOnDate(today, timings.Dhuhr, TZ),
-    Asr: timeOnDate(today, timings.Asr, TZ),
-    Maghrib: maghrib,
-    Isha: addMinutes(maghrib, ishaOffsetFor(today))
+    Asr: addMinutes(timeOnDate(today, timings.Asr, TZ), 56),
+    Maghrib: addMinutes(timeOnDate(today, timings.Maghrib, TZ), 4),
+    Isha: addMinutes(timeOnDate(today, timings.Isha, TZ), -16)
   };
 
   const dayKey = fmtDateISO(today);
