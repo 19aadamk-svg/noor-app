@@ -1,9 +1,9 @@
 // Scheduled function (see netlify.toml for the cron schedule) — runs on its
 // own every few minutes, independent of whether the app is open anywhere.
-// It fetches today's Bradford prayer times using the exact same formula as
-// the app itself (matched to Tawakkulia Jamia Masjid's own timetable), and
-// sends a real push notification through the browser's push service the
-// moment each one arrives.
+// Computes Bradford prayer times with a self-contained solar calculation
+// (no external API) and sends a real push notification the moment each one
+// arrives. This mirrors the exact same calculation used in index.html and
+// fajr-widget.html, so all three always agree.
 //
 // Written as a Netlify v2 function (export default) — this is the format
 // Netlify's current docs require for scheduled functions.
@@ -24,29 +24,76 @@ function fmtDateISO(d){
   return `${da}-${m}-${y}`;
 }
 
-// Mirrors the client's timeOnDate() in index.html exactly, so server-computed
-// times always agree with what's displayed in the app.
-function timeOnDate(baseDate, hhmm, tz){
-  const clean = hhmm.split(' ')[0];
-  const [h, m] = clean.split(':').map(Number);
+function addMinutes(d, mins){ return new Date(d.getTime() + mins*60000); }
+
+// Converts a local decimal-hours value into the correct UTC instant for
+// London time, handling BST/GMT regardless of the server's own timezone.
+function hoursToDate(baseDate, decimalHours){
+  let h = Math.floor(decimalHours);
+  let m = Math.round((decimalHours - h) * 60);
+  if (m === 60){ m = 0; h += 1; }
+  h = ((h % 24) + 24) % 24;
   const y = baseDate.getFullYear(), mo = baseDate.getMonth(), da = baseDate.getDate();
   const guess = new Date(Date.UTC(y, mo, da, h, m));
-  const londonStr = guess.toLocaleString('en-US', { timeZone: tz, hour12:false, year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit' });
-  const [dpart, tpart] = londonStr.split(', ');
+  const londonStr = guess.toLocaleString('en-US', { timeZone: TZ, hour12:false, year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit' });
+  const [, tpart] = londonStr.split(', ');
   const [lh, lmin] = tpart.split(':').map(Number);
   const diffMinutes = (lh*60+lmin) - (h*60+m);
   return new Date(guess.getTime() - diffMinutes*60000);
 }
 
-function addMinutes(d, mins){ return new Date(d.getTime() + mins*60000); }
+function julianDay(y, m, d, hour){
+  if (m <= 2){ y -= 1; m += 12; }
+  const A = Math.floor(y / 100);
+  const B = 2 - A + Math.floor(A / 4);
+  return Math.floor(365.25 * (y + 4716)) + Math.floor(30.6001 * (m + 1)) + d + B - 1524.5 + hour / 24;
+}
+function solarPosition(jd){
+  const D = jd - 2451545.0;
+  const g = (357.529 + 0.98560028 * D) * Math.PI / 180;
+  const q = (280.459 + 0.98564736 * D) % 360;
+  const L = ((q + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) % 360) * Math.PI / 180;
+  const e = (23.439 - 0.00000036 * D) * Math.PI / 180;
+  const dec = Math.asin(Math.sin(e) * Math.sin(L));
+  const RA = (Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L)) * 180 / Math.PI + 360) % 360;
+  let EqT = (q / 15.0 - RA / 15.0) * 60;
+  if (EqT > 720) EqT -= 1440;
+  if (EqT < -720) EqT += 1440;
+  return { dec: dec * 180 / Math.PI, EqT };
+}
+function angleHours(latR, decR, angle, beforeNoon){
+  const cosH = (-Math.sin(angle * Math.PI / 180) - Math.sin(latR) * Math.sin(decR)) / (Math.cos(latR) * Math.cos(decR));
+  const H = Math.acos(Math.max(-1, Math.min(1, cosH))) * 180 / Math.PI;
+  return beforeNoon ? -H / 15.0 : H / 15.0;
+}
 
-async function fetchTimings(date){
-  const iso = fmtDateISO(date);
-  const url = `https://api.aladhan.com/v1/timings/${iso}?latitude=${LAT}&longitude=${LON}&method=99&methodSettings=18,null,12&school=0&latitudeAdjustmentMethod=1&timezonestring=${encodeURIComponent(TZ)}`;
-  const res = await fetch(url);
-  if(!res.ok) throw new Error('Prayer time service unavailable');
-  const data = await res.json();
-  return data.data.timings;
+function computePrayerTimes(forDate){
+  const tzOffsetHours = -forDate.getTimezoneOffset() / 60;
+  const jd = julianDay(forDate.getFullYear(), forDate.getMonth() + 1, forDate.getDate(), 12);
+  const { dec, EqT } = solarPosition(jd);
+  const noonLocal = 12 - LON / 15.0 - EqT / 60.0 + tzOffsetHours;
+  const latR = LAT * Math.PI / 180, decR = dec * Math.PI / 180;
+
+  const fajr = noonLocal + angleHours(latR, decR, 18, true) + 20/60.0;
+  const dhuhr = noonLocal;
+
+  const factor = 1; // Hanbali / standard shadow-length factor
+  const t = factor + Math.tan(Math.abs(latR - decR));
+  const altAsr = Math.atan(1.0 / t) * 180 / Math.PI;
+  const cosHAsr = (Math.sin(altAsr * Math.PI/180) - Math.sin(latR)*Math.sin(decR)) / (Math.cos(latR)*Math.cos(decR));
+  const HAsr = Math.acos(Math.max(-1,Math.min(1,cosHAsr))) * 180 / Math.PI;
+  const asr = noonLocal + HAsr/15.0 + 56/60.0;
+
+  const maghrib = noonLocal + angleHours(latR, decR, 0.833, false) + 4/60.0;
+  const isha = noonLocal + angleHours(latR, decR, 12, false) - 16/60.0;
+
+  return {
+    Fajr: hoursToDate(forDate, fajr),
+    Dhuhr: hoursToDate(forDate, dhuhr),
+    Asr: hoursToDate(forDate, asr),
+    Maghrib: hoursToDate(forDate, maghrib),
+    Isha: hoursToDate(forDate, isha)
+  };
 }
 
 export default async () => {
@@ -64,22 +111,7 @@ export default async () => {
 
   const now = new Date();
   const today = new Date();
-
-  let timings;
-  try{
-    timings = await fetchTimings(today);
-  }catch(err){
-    console.log('Could not fetch prayer times: ' + err.message);
-    return new Response('Could not fetch prayer times: ' + err.message, { status: 502 });
-  }
-
-  const prayerTimes = {
-    Fajr: addMinutes(timeOnDate(today, timings.Fajr, TZ), 20),
-    Dhuhr: timeOnDate(today, timings.Dhuhr, TZ),
-    Asr: addMinutes(timeOnDate(today, timings.Asr, TZ), 56),
-    Maghrib: addMinutes(timeOnDate(today, timings.Maghrib, TZ), 4),
-    Isha: addMinutes(timeOnDate(today, timings.Isha, TZ), -16)
-  };
+  const prayerTimes = computePrayerTimes(today);
 
   const dayKey = fmtDateISO(today);
   console.log('Now:', now.toISOString(), '| Times:', Object.fromEntries(Object.entries(prayerTimes).map(([k,v])=>[k,v.toISOString()])));
