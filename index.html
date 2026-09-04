@@ -919,7 +919,7 @@
         <div class="divider-label">Sunnah &amp; Voluntary Prayers</div>
         <div class="sunnah-list" id="sunnah-list"></div>
 
-        <div class="prayer-note">Fard times are matched to Tawakkulia Jamia Masjid's own timetable: a 15° angle for Fajr, the standard solar-noon Dhuhr, the Hanafi shadow-length factor for Asr, and sunset plus this mosque's own ~4-minute margin for Maghrib — these hold year-round with no updates needed. Isha isn't a clean formula at this mosque: it's their own daily figure, exact for the months checked against a real published timetable and a well-evidenced 60-minute default elsewhere. Jama'ah (congregation) times are set separately by the mosque and are usually a bit later than the times shown here.</div>
+        <div class="prayer-note">Fard times use a fixed personal calculation: Fajr at an 18° angle (+20 min), Dhuhr at solar noon (unchanged), Asr on the Hanbali shadow-length factor (+56 min), Maghrib at sunset (+4 min), and Isha at a 12° angle (−16 min). These hold year-round with no updates needed. Jama'ah (congregation) times are set separately by your mosque and may differ from the times shown here.</div>
       </div>
     </section>
 
@@ -1349,7 +1349,7 @@
 
   async function fetchTimings(date){
     const iso = fmtDateISO(date);
-    const url = `https://api.aladhan.com/v1/timings/${iso}?latitude=${LAT}&longitude=${LON}&method=2&school=1&latitudeAdjustmentMethod=1&timezonestring=${encodeURIComponent(TZ)}`;
+    const url = `https://api.aladhan.com/v1/timings/${iso}?latitude=${LAT}&longitude=${LON}&method=99&methodSettings=18,null,12&school=0&latitudeAdjustmentMethod=1&timezonestring=${encodeURIComponent(TZ)}`;
     const res = await fetch(url);
     if(!res.ok) throw new Error('Prayer time service unavailable');
     const data = await res.json();
@@ -1384,45 +1384,16 @@
 
       const [t1, t2] = await Promise.all([fetchTimings(today), fetchTimings(tomorrow)]);
 
-      // Matched directly to Tawakkulia Jamia Masjid's own published timetable:
-      // 15° for Fajr (ISNA angle), standard solar noon for Dhuhr, Hanafi Asr,
-      // exact sunset for Maghrib, and Isha as their own fixed 60-minute
-      // interval after Maghrib rather than any twilight angle.
-      const Fajr = timeOnDate(today, t1.Fajr);
+      // Personal calculation rule (Hanbali): Fajr at 18°, Isha at 12°, Asr
+      // using the Hanbali/standard shadow-length factor, with fixed manual
+      // adjustments applied on top of each raw calculated time.
+      const Fajr = addMinutes(timeOnDate(today, t1.Fajr), 20);
       const Sunrise = timeOnDate(today, t1.Sunrise);
       const Dhuhr = timeOnDate(today, t1.Dhuhr);
-      const Asr = timeOnDate(today, t1.Asr);
-      // The mosque's own Maghrib runs about 4 minutes past pure calculated
-      // sunset, consistently across two real published months — a small
-      // built-in margin on their end, not a rounding artifact.
-      const MAGHRIB_MARGIN_MIN = 4;
-      const Maghrib = addMinutes(timeOnDate(today, t1.Maghrib), MAGHRIB_MARGIN_MIN);
-      // Isha isn't a clean twilight-angle or fixed-interval formula at this
-      // mosque — verified against two real published months, it's a flat
-      // 60-minute gap after Maghrib most of the year, but gradually widens
-      // in autumn (and presumably narrows back in spring). Use the mosque's
-      // own exact daily figures for the months we have, and 60 minutes
-      // elsewhere as the well-evidenced default. Sending future months'
-      // timetables extends this permanently — the pattern repeats yearly.
-      const ISHA_OFFSET_MIN = {
-        '08-01':60,'08-02':60,'08-03':60,'08-04':60,'08-05':60,'08-06':60,'08-07':60,
-        '08-08':60,'08-09':60,'08-10':60,'08-11':60,'08-12':60,'08-13':60,'08-14':60,
-        '08-15':60,'08-16':60,'08-17':60,'08-18':60,'08-19':60,'08-20':60,'08-21':60,
-        '08-22':60,'08-23':60,'08-24':60,'08-25':60,'08-26':60,'08-27':60,'08-28':60,
-        '08-29':60,'08-30':60,'08-31':60,
-        '09-01':60,'09-02':60,'09-03':60,'09-04':60,'09-05':60,'09-06':60,'09-07':60,
-        '09-08':60,'09-09':60,'09-10':60,'09-11':61,'09-12':60,'09-13':62,'09-14':64,
-        '09-15':63,'09-16':63,'09-17':63,'09-18':63,'09-19':64,'09-20':64,'09-21':64,
-        '09-22':65,'09-23':65,'09-24':65,'09-25':65,'09-26':65,'09-27':65,'09-28':65,
-        '09-29':65,'09-30':65
-      };
-      function ishaOffsetFor(date){
-        const mm = String(date.getMonth()+1).padStart(2,'0');
-        const dd = String(date.getDate()).padStart(2,'0');
-        return ISHA_OFFSET_MIN[`${mm}-${dd}`] ?? 60;
-      }
-      const Isha = addMinutes(Maghrib, ishaOffsetFor(today));
-      const FajrTomorrow = timeOnDate(tomorrow, t2.Fajr);
+      const Asr = addMinutes(timeOnDate(today, t1.Asr), 56);
+      const Maghrib = addMinutes(timeOnDate(today, t1.Maghrib), 4);
+      const Isha = addMinutes(timeOnDate(today, t1.Isha), -16);
+      const FajrTomorrow = addMinutes(timeOnDate(tomorrow, t2.Fajr), 20);
 
       // Determine current/next fard for a subtle highlight
       const now = new Date();
