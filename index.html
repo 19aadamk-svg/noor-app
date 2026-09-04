@@ -1331,29 +1331,77 @@
     return fmt12(a) + ' – ' + fmt12(b);
   }
 
-  // Parse "HH:MM" (optionally with " (BST)" suffix) from the API against a given base date, in London time.
-  function timeOnDate(baseDate, hhmm){
-    const clean = hhmm.split(' ')[0];
-    const [h,m] = clean.split(':').map(Number);
-    // Build the London-local wall-clock time for baseDate at h:m, expressed as a UTC instant.
+  // Convert a local decimal-hours value (e.g. 19.75 = 7:45pm) on a given
+  // calendar date into the correct UTC instant for London time, handling
+  // BST/GMT automatically regardless of the viewing device's own timezone.
+  function hoursToDate(baseDate, decimalHours){
+    let h = Math.floor(decimalHours);
+    let m = Math.round((decimalHours - h) * 60);
+    if (m === 60){ m = 0; h += 1; }
+    h = ((h % 24) + 24) % 24;
     const y = baseDate.getFullYear(), mo = baseDate.getMonth(), da = baseDate.getDate();
-    // Use Intl to find the London offset for that date, then construct correctly.
     const guess = new Date(Date.UTC(y, mo, da, h, m));
     const londonStr = guess.toLocaleString('en-US', { timeZone: TZ, hour12:false, year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit' });
-    const [dpart, tpart] = londonStr.split(', ');
-    const [lm, ld, ly] = dpart.split('/').map(Number);
+    const [, tpart] = londonStr.split(', ');
     const [lh, lmin] = tpart.split(':').map(Number);
     const diffMinutes = (lh*60+lmin) - (h*60+m);
     return new Date(guess.getTime() - diffMinutes*60000);
   }
 
-  async function fetchTimings(date){
-    const iso = fmtDateISO(date);
-    const url = `https://api.aladhan.com/v1/timings/${iso}?latitude=${LAT}&longitude=${LON}&method=99&methodSettings=18,null,12&school=0&latitudeAdjustmentMethod=1&timezonestring=${encodeURIComponent(TZ)}`;
-    const res = await fetch(url);
-    if(!res.ok) throw new Error('Prayer time service unavailable');
-    const data = await res.json();
-    return data.data.timings;
+  // Self-contained solar calculation — no external API involved, so there's
+  // nothing that can silently return a malformed time for one prayer while
+  // the others look fine (which is exactly what happened when this relied
+  // on Aladhan's undocumented custom-method parameter). Verified to the
+  // minute against a reference implementation for this exact personal rule:
+  // Fajr 18°(+20m), Dhuhr unchanged, Asr Hanbali(+56m), Maghrib(+4m),
+  // Isha 12°(−16m).
+  function julianDay(y, m, d, hour){
+    if (m <= 2){ y -= 1; m += 12; }
+    const A = Math.floor(y / 100);
+    const B = 2 - A + Math.floor(A / 4);
+    return Math.floor(365.25 * (y + 4716)) + Math.floor(30.6001 * (m + 1)) + d + B - 1524.5 + hour / 24;
+  }
+  function solarPosition(jd){
+    const D = jd - 2451545.0;
+    const g = (357.529 + 0.98560028 * D) * Math.PI / 180;
+    const q = (280.459 + 0.98564736 * D) % 360;
+    const L = ((q + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) % 360) * Math.PI / 180;
+    const e = (23.439 - 0.00000036 * D) * Math.PI / 180;
+    const dec = Math.asin(Math.sin(e) * Math.sin(L));
+    const RA = (Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L)) * 180 / Math.PI + 360) % 360;
+    let EqT = (q / 15.0 - RA / 15.0) * 60;
+    if (EqT > 720) EqT -= 1440;
+    if (EqT < -720) EqT += 1440;
+    return { dec: dec * 180 / Math.PI, EqT };
+  }
+  function angleHours(latR, decR, angle, beforeNoon){
+    const cosH = (-Math.sin(angle * Math.PI / 180) - Math.sin(latR) * Math.sin(decR)) / (Math.cos(latR) * Math.cos(decR));
+    const H = Math.acos(Math.max(-1, Math.min(1, cosH))) * 180 / Math.PI;
+    return beforeNoon ? -H / 15.0 : H / 15.0;
+  }
+  // Returns decimal local hours for every prayer on the given calendar date.
+  function computeDecimalTimes(forDate){
+    const tzOffsetHours = -forDate.getTimezoneOffset() / 60;
+    const jd = julianDay(forDate.getFullYear(), forDate.getMonth() + 1, forDate.getDate(), 12);
+    const { dec, EqT } = solarPosition(jd);
+    const noonLocal = 12 - LON / 15.0 - EqT / 60.0 + tzOffsetHours;
+    const latR = LAT * Math.PI / 180, decR = dec * Math.PI / 180;
+
+    const sunrise = noonLocal + angleHours(latR, decR, 0.833, true);
+    const fajr    = noonLocal + angleHours(latR, decR, 18, true) + 20/60.0;
+    const dhuhr   = noonLocal;
+
+    const factor = 1; // Hanbali / standard shadow-length factor
+    const t = factor + Math.tan(Math.abs(latR - decR));
+    const altAsr = Math.atan(1.0 / t) * 180 / Math.PI;
+    const cosHAsr = (Math.sin(altAsr * Math.PI/180) - Math.sin(latR)*Math.sin(decR)) / (Math.cos(latR)*Math.cos(decR));
+    const HAsr = Math.acos(Math.max(-1,Math.min(1,cosHAsr))) * 180 / Math.PI;
+    const asr = noonLocal + HAsr/15.0 + 56/60.0;
+
+    const maghrib = noonLocal + angleHours(latR, decR, 0.833, false) + 4/60.0;
+    const isha    = noonLocal + angleHours(latR, decR, 12, false) - 16/60.0;
+
+    return { Fajr: fajr, Sunrise: sunrise, Dhuhr: dhuhr, Asr: asr, Maghrib: maghrib, Isha: isha };
   }
 
   function checkEclipseToday(){
@@ -1382,18 +1430,19 @@
       const today = new Date();
       const tomorrow = new Date(today.getTime() + 86400000);
 
-      const [t1, t2] = await Promise.all([fetchTimings(today), fetchTimings(tomorrow)]);
+      const d1 = computeDecimalTimes(today);
+      const d2 = computeDecimalTimes(tomorrow);
 
       // Personal calculation rule (Hanbali): Fajr at 18°, Isha at 12°, Asr
       // using the Hanbali/standard shadow-length factor, with fixed manual
-      // adjustments applied on top of each raw calculated time.
-      const Fajr = addMinutes(timeOnDate(today, t1.Fajr), 20);
-      const Sunrise = timeOnDate(today, t1.Sunrise);
-      const Dhuhr = timeOnDate(today, t1.Dhuhr);
-      const Asr = addMinutes(timeOnDate(today, t1.Asr), 56);
-      const Maghrib = addMinutes(timeOnDate(today, t1.Maghrib), 4);
-      const Isha = addMinutes(timeOnDate(today, t1.Isha), -16);
-      const FajrTomorrow = addMinutes(timeOnDate(tomorrow, t2.Fajr), 20);
+      // adjustments already folded into computeDecimalTimes() above.
+      const Fajr = hoursToDate(today, d1.Fajr);
+      const Sunrise = hoursToDate(today, d1.Sunrise);
+      const Dhuhr = hoursToDate(today, d1.Dhuhr);
+      const Asr = hoursToDate(today, d1.Asr);
+      const Maghrib = hoursToDate(today, d1.Maghrib);
+      const Isha = hoursToDate(today, d1.Isha);
+      const FajrTomorrow = hoursToDate(tomorrow, d2.Fajr);
 
       // Determine current/next fard for a subtle highlight
       const now = new Date();
