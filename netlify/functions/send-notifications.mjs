@@ -67,8 +67,20 @@ function angleHours(latR, decR, angle, beforeNoon){
   return beforeNoon ? -H / 15.0 : H / 15.0;
 }
 
+// Returns the correct UTC offset (in hours) for Europe/London on the given
+// calendar date — computed from the timezone database itself, not the
+// server's own system clock. Netlify's functions run in UTC, so relying on
+// the server's local timezone would silently make every prayer time an
+// hour off during BST, which is exactly the bug this replaces.
+function londonOffsetHours(y, m, d){
+  const utcNoon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const londonStr = utcNoon.toLocaleString('en-US', { timeZone: 'Europe/London', hour12:false, hour:'2-digit', minute:'2-digit' });
+  const [lh, lm] = londonStr.split(':').map(Number);
+  return (lh + lm / 60) - 12;
+}
+
 function computePrayerTimes(forDate){
-  const tzOffsetHours = -forDate.getTimezoneOffset() / 60;
+  const tzOffsetHours = londonOffsetHours(forDate.getFullYear(), forDate.getMonth() + 1, forDate.getDate());
   const jd = julianDay(forDate.getFullYear(), forDate.getMonth() + 1, forDate.getDate(), 12);
   const { dec, EqT } = solarPosition(jd);
   const noonLocal = 12 - LON / 15.0 - EqT / 60.0 + tzOffsetHours;
