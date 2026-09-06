@@ -1332,20 +1332,16 @@
   }
 
   // Convert a local decimal-hours value (e.g. 19.75 = 7:45pm) on a given
-  // calendar date into the correct UTC instant for London time, handling
-  // BST/GMT automatically regardless of the viewing device's own timezone.
-  function hoursToDate(baseDate, decimalHours){
-    let h = Math.floor(decimalHours);
-    let m = Math.round((decimalHours - h) * 60);
-    if (m === 60){ m = 0; h += 1; }
-    h = ((h % 24) + 24) % 24;
+  // Converts a local London decimal-hours value into the correct UTC Date,
+  // using an already-known BST/GMT offset — pure arithmetic, no timezone
+  // database lookups (Date.UTC normalizes out-of-range hour values on its
+  // own, so this works correctly even right around midnight).
+  function hoursToDate(baseDate, decimalLocalHours, tzOffsetHours){
+    const utcDecimalHours = decimalLocalHours - tzOffsetHours;
+    const h = Math.floor(utcDecimalHours);
+    const m = Math.round((utcDecimalHours - h) * 60);
     const y = baseDate.getFullYear(), mo = baseDate.getMonth(), da = baseDate.getDate();
-    const guess = new Date(Date.UTC(y, mo, da, h, m));
-    const londonStr = guess.toLocaleString('en-US', { timeZone: TZ, hour12:false, year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit' });
-    const [, tpart] = londonStr.split(', ');
-    const [lh, lmin] = tpart.split(':').map(Number);
-    const diffMinutes = (lh*60+lmin) - (h*60+m);
-    return new Date(guess.getTime() - diffMinutes*60000);
+    return new Date(Date.UTC(y, mo, da, h, m));
   }
 
   // Self-contained solar calculation — no external API involved, so there's
@@ -1379,9 +1375,27 @@
     const H = Math.acos(Math.max(-1, Math.min(1, cosH))) * 180 / Math.PI;
     return beforeNoon ? -H / 15.0 : H / 15.0;
   }
+  // Returns the correct UTC offset (in hours) for Europe/London on the given
+  // calendar date — pure date arithmetic, not a timezone database lookup.
+  // UK clocks go forward on the last Sunday in March at 01:00 UTC, and back
+  // on the last Sunday in October at 01:00 UTC. (An earlier version used
+  // toLocaleString with a timeZone option, which is reliable in browsers
+  // but turned out not to be reliable on every server environment.)
+  function londonOffsetHours(y, m, d){
+    function lastSunday(year, monthIndex){
+      const last = new Date(Date.UTC(year, monthIndex + 1, 0, 1, 0, 0));
+      last.setUTCDate(last.getUTCDate() - last.getUTCDay());
+      return last;
+    }
+    const check = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+    const bstStart = lastSunday(y, 2);  // March
+    const bstEnd = lastSunday(y, 9);    // October
+    return (check >= bstStart && check < bstEnd) ? 1 : 0;
+  }
+
   // Returns decimal local hours for every prayer on the given calendar date.
   function computeDecimalTimes(forDate){
-    const tzOffsetHours = -forDate.getTimezoneOffset() / 60;
+    const tzOffsetHours = londonOffsetHours(forDate.getFullYear(), forDate.getMonth() + 1, forDate.getDate());
     const jd = julianDay(forDate.getFullYear(), forDate.getMonth() + 1, forDate.getDate(), 12);
     const { dec, EqT } = solarPosition(jd);
     const noonLocal = 12 - LON / 15.0 - EqT / 60.0 + tzOffsetHours;
@@ -1432,17 +1446,19 @@
 
       const d1 = computeDecimalTimes(today);
       const d2 = computeDecimalTimes(tomorrow);
+      const tz1 = londonOffsetHours(today.getFullYear(), today.getMonth() + 1, today.getDate());
+      const tz2 = londonOffsetHours(tomorrow.getFullYear(), tomorrow.getMonth() + 1, tomorrow.getDate());
 
       // Personal calculation rule (Hanbali): Fajr at 18°, Isha at 12°, Asr
       // using the Hanbali/standard shadow-length factor, with fixed manual
       // adjustments already folded into computeDecimalTimes() above.
-      const Fajr = hoursToDate(today, d1.Fajr);
-      const Sunrise = hoursToDate(today, d1.Sunrise);
-      const Dhuhr = hoursToDate(today, d1.Dhuhr);
-      const Asr = hoursToDate(today, d1.Asr);
-      const Maghrib = hoursToDate(today, d1.Maghrib);
-      const Isha = hoursToDate(today, d1.Isha);
-      const FajrTomorrow = hoursToDate(tomorrow, d2.Fajr);
+      const Fajr = hoursToDate(today, d1.Fajr, tz1);
+      const Sunrise = hoursToDate(today, d1.Sunrise, tz1);
+      const Dhuhr = hoursToDate(today, d1.Dhuhr, tz1);
+      const Asr = hoursToDate(today, d1.Asr, tz1);
+      const Maghrib = hoursToDate(today, d1.Maghrib, tz1);
+      const Isha = hoursToDate(today, d1.Isha, tz1);
+      const FajrTomorrow = hoursToDate(tomorrow, d2.Fajr, tz2);
 
       // Determine current/next fard for a subtle highlight
       const now = new Date();
