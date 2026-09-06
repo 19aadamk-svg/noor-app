@@ -26,20 +26,15 @@ function fmtDateISO(d){
 
 function addMinutes(d, mins){ return new Date(d.getTime() + mins*60000); }
 
-// Converts a local decimal-hours value into the correct UTC instant for
-// London time, handling BST/GMT regardless of the server's own timezone.
-function hoursToDate(baseDate, decimalHours){
-  let h = Math.floor(decimalHours);
-  let m = Math.round((decimalHours - h) * 60);
-  if (m === 60){ m = 0; h += 1; }
-  h = ((h % 24) + 24) % 24;
+// Converts a local London decimal-hours value into the correct UTC Date,
+// using the already-known offset (pure arithmetic, no timezone lookups —
+// Date.UTC normalizes out-of-range hour values correctly on its own).
+function hoursToDate(baseDate, decimalLocalHours, tzOffsetHours){
+  const utcDecimalHours = decimalLocalHours - tzOffsetHours;
+  const h = Math.floor(utcDecimalHours);
+  const m = Math.round((utcDecimalHours - h) * 60);
   const y = baseDate.getFullYear(), mo = baseDate.getMonth(), da = baseDate.getDate();
-  const guess = new Date(Date.UTC(y, mo, da, h, m));
-  const londonStr = guess.toLocaleString('en-US', { timeZone: TZ, hour12:false, year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit' });
-  const [, tpart] = londonStr.split(', ');
-  const [lh, lmin] = tpart.split(':').map(Number);
-  const diffMinutes = (lh*60+lmin) - (h*60+m);
-  return new Date(guess.getTime() - diffMinutes*60000);
+  return new Date(Date.UTC(y, mo, da, h, m));
 }
 
 function julianDay(y, m, d, hour){
@@ -72,11 +67,24 @@ function angleHours(latR, decR, angle, beforeNoon){
 // server's own system clock. Netlify's functions run in UTC, so relying on
 // the server's local timezone would silently make every prayer time an
 // hour off during BST, which is exactly the bug this replaces.
+// Returns the correct UTC offset (in hours) for Europe/London on the given
+// calendar date — using pure date arithmetic, not the runtime's timezone
+// database. Netlify's servers appear not to fully support IANA timezone
+// lookups (toLocaleString with timeZone silently fell back to UTC there),
+// which is exactly what caused every prayer time to be an hour early during
+// BST. UK clocks go forward on the last Sunday in March at 01:00 UTC, and
+// back on the last Sunday in October at 01:00 UTC — this needs no timezone
+// data at all, so it can't fail the same way on any server.
 function londonOffsetHours(y, m, d){
-  const utcNoon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
-  const londonStr = utcNoon.toLocaleString('en-US', { timeZone: 'Europe/London', hour12:false, hour:'2-digit', minute:'2-digit' });
-  const [lh, lm] = londonStr.split(':').map(Number);
-  return (lh + lm / 60) - 12;
+  function lastSunday(year, monthIndex){
+    const last = new Date(Date.UTC(year, monthIndex + 1, 0, 1, 0, 0));
+    last.setUTCDate(last.getUTCDate() - last.getUTCDay());
+    return last;
+  }
+  const check = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const bstStart = lastSunday(y, 2);  // March
+  const bstEnd = lastSunday(y, 9);    // October
+  return (check >= bstStart && check < bstEnd) ? 1 : 0;
 }
 
 function computePrayerTimes(forDate){
@@ -100,11 +108,11 @@ function computePrayerTimes(forDate){
   const isha = noonLocal + angleHours(latR, decR, 12, false) - 16/60.0;
 
   return {
-    Fajr: hoursToDate(forDate, fajr),
-    Dhuhr: hoursToDate(forDate, dhuhr),
-    Asr: hoursToDate(forDate, asr),
-    Maghrib: hoursToDate(forDate, maghrib),
-    Isha: hoursToDate(forDate, isha)
+    Fajr: hoursToDate(forDate, fajr, tzOffsetHours),
+    Dhuhr: hoursToDate(forDate, dhuhr, tzOffsetHours),
+    Asr: hoursToDate(forDate, asr, tzOffsetHours),
+    Maghrib: hoursToDate(forDate, maghrib, tzOffsetHours),
+    Isha: hoursToDate(forDate, isha, tzOffsetHours)
   };
 }
 
