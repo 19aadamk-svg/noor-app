@@ -94,18 +94,18 @@ function computePrayerTimes(forDate){
   const noonLocal = 12 - LON / 15.0 - EqT / 60.0 + tzOffsetHours;
   const latR = LAT * Math.PI / 180, decR = dec * Math.PI / 180;
 
-  const fajr = noonLocal + angleHours(latR, decR, 18, true) + 20/60.0;
+  const fajr = noonLocal + angleHours(latR, decR, 15, true);
   const dhuhr = noonLocal;
 
-  const factor = 1; // Hanbali / standard shadow-length factor
+  const factor = 2; // Hanafi shadow-length factor — matches Tawakkulia Jamia Masjid's published table
   const t = factor + Math.tan(Math.abs(latR - decR));
   const altAsr = Math.atan(1.0 / t) * 180 / Math.PI;
   const cosHAsr = (Math.sin(altAsr * Math.PI/180) - Math.sin(latR)*Math.sin(decR)) / (Math.cos(latR)*Math.cos(decR));
   const HAsr = Math.acos(Math.max(-1,Math.min(1,cosHAsr))) * 180 / Math.PI;
-  const asr = noonLocal + HAsr/15.0 + 56/60.0;
+  const asr = noonLocal + HAsr/15.0;
 
   const maghrib = noonLocal + angleHours(latR, decR, 0.833, false) + 4/60.0;
-  const isha = noonLocal + angleHours(latR, decR, 12, false) - 16/60.0;
+  const isha = noonLocal + angleHours(latR, decR, 10.35, false);
 
   return {
     Fajr: hoursToDate(forDate, fajr, tzOffsetHours),
