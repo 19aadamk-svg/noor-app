@@ -1,16 +1,15 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#0E2A24">
-<title>Noor — Daily Reflections</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Zilla+Slab:wght@300;400;500;600&family=Zilla+Slab+Highlight&display=swap" rel="stylesheet">
-<style>
-  :root{
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0A211C">
+  <title>Noor — Daily Reflections</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Zilla+Slab:wght@300;400;500;600&family=Zilla+Slab+Highlight&display=swap" rel="stylesheet">
+  <style>  :root{
     --ink:#0A211C;
     --panel:#123830;
     --panel-2:#173F36;
@@ -919,7 +918,7 @@
         <div class="divider-label">Sunnah &amp; Voluntary Prayers</div>
         <div class="sunnah-list" id="sunnah-list"></div>
 
-        <div class="prayer-note">Fard times use a fixed personal calculation: Fajr at an 18° angle (+20 min), Dhuhr at solar noon (unchanged), Asr on the Hanbali shadow-length factor (+56 min), Maghrib at sunset (+4 min), and Isha at a 12° angle (−16 min). These hold year-round with no updates needed. Jama'ah (congregation) times are set separately by your mosque and may differ from the times shown here.</div>
+        <div class="prayer-note">Fard times are matched to Tawakkulia Jamia Masjid's own timetable: a 15° angle for Fajr, the standard solar-noon Dhuhr, the Hanafi shadow-length factor for Asr, exact sunset for Maghrib, and Isha set 60 minutes after Maghrib rather than by twilight angle — mirroring how this specific mosque calculates its own "Begins" times. Jama'ah (congregation) times are set separately by the mosque and are usually a bit later than the times shown here.</div>
       </div>
     </section>
 
@@ -1331,94 +1330,29 @@
     return fmt12(a) + ' – ' + fmt12(b);
   }
 
-  // Convert a local decimal-hours value (e.g. 19.75 = 7:45pm) on a given
-  // Converts a local London decimal-hours value into the correct UTC Date,
-  // using an already-known BST/GMT offset — pure arithmetic, no timezone
-  // database lookups (Date.UTC normalizes out-of-range hour values on its
-  // own, so this works correctly even right around midnight).
-  function hoursToDate(baseDate, decimalLocalHours, tzOffsetHours){
-    const utcDecimalHours = decimalLocalHours - tzOffsetHours;
-    const h = Math.floor(utcDecimalHours);
-    const m = Math.round((utcDecimalHours - h) * 60);
+  // Parse "HH:MM" (optionally with " (BST)" suffix) from the API against a given base date, in London time.
+  function timeOnDate(baseDate, hhmm){
+    const clean = hhmm.split(' ')[0];
+    const [h,m] = clean.split(':').map(Number);
+    // Build the London-local wall-clock time for baseDate at h:m, expressed as a UTC instant.
     const y = baseDate.getFullYear(), mo = baseDate.getMonth(), da = baseDate.getDate();
-    return new Date(Date.UTC(y, mo, da, h, m));
+    // Use Intl to find the London offset for that date, then construct correctly.
+    const guess = new Date(Date.UTC(y, mo, da, h, m));
+    const londonStr = guess.toLocaleString('en-US', { timeZone: TZ, hour12:false, year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit' });
+    const [dpart, tpart] = londonStr.split(', ');
+    const [lm, ld, ly] = dpart.split('/').map(Number);
+    const [lh, lmin] = tpart.split(':').map(Number);
+    const diffMinutes = (lh*60+lmin) - (h*60+m);
+    return new Date(guess.getTime() - diffMinutes*60000);
   }
 
-  // Self-contained solar calculation — no external API involved, so there's
-  // nothing that can silently return a malformed time for one prayer while
-  // the others look fine (which is exactly what happened when this relied
-  // on Aladhan's undocumented custom-method parameter). Angles below were
-  // reverse-engineered from Tawakkulia Jamia Masjid's published September
-  // 2026 Begin-times table: Fajr 15°, Dhuhr unchanged, Asr Hanafi factor 2,
-  // Maghrib 0.833°(+4m). Isha doesn't reduce to one clean angle across the
-  // month (the masjid's real Isha likely isn't a pure single-angle calc) —
-  // 10.35° is the best single-angle fit, accurate to ~1-2min mid-month but
-  // drifting to roughly +5.5min/-4.5min at the start/end of the month.
-  function julianDay(y, m, d, hour){
-    if (m <= 2){ y -= 1; m += 12; }
-    const A = Math.floor(y / 100);
-    const B = 2 - A + Math.floor(A / 4);
-    return Math.floor(365.25 * (y + 4716)) + Math.floor(30.6001 * (m + 1)) + d + B - 1524.5 + hour / 24;
-  }
-  function solarPosition(jd){
-    const D = jd - 2451545.0;
-    const g = (357.529 + 0.98560028 * D) * Math.PI / 180;
-    const q = (280.459 + 0.98564736 * D) % 360;
-    const L = ((q + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) % 360) * Math.PI / 180;
-    const e = (23.439 - 0.00000036 * D) * Math.PI / 180;
-    const dec = Math.asin(Math.sin(e) * Math.sin(L));
-    const RA = (Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L)) * 180 / Math.PI + 360) % 360;
-    let EqT = (q / 15.0 - RA / 15.0) * 60;
-    if (EqT > 720) EqT -= 1440;
-    if (EqT < -720) EqT += 1440;
-    return { dec: dec * 180 / Math.PI, EqT };
-  }
-  function angleHours(latR, decR, angle, beforeNoon){
-    const cosH = (-Math.sin(angle * Math.PI / 180) - Math.sin(latR) * Math.sin(decR)) / (Math.cos(latR) * Math.cos(decR));
-    const H = Math.acos(Math.max(-1, Math.min(1, cosH))) * 180 / Math.PI;
-    return beforeNoon ? -H / 15.0 : H / 15.0;
-  }
-  // Returns the correct UTC offset (in hours) for Europe/London on the given
-  // calendar date — pure date arithmetic, not a timezone database lookup.
-  // UK clocks go forward on the last Sunday in March at 01:00 UTC, and back
-  // on the last Sunday in October at 01:00 UTC. (An earlier version used
-  // toLocaleString with a timeZone option, which is reliable in browsers
-  // but turned out not to be reliable on every server environment.)
-  function londonOffsetHours(y, m, d){
-    function lastSunday(year, monthIndex){
-      const last = new Date(Date.UTC(year, monthIndex + 1, 0, 1, 0, 0));
-      last.setUTCDate(last.getUTCDate() - last.getUTCDay());
-      return last;
-    }
-    const check = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
-    const bstStart = lastSunday(y, 2);  // March
-    const bstEnd = lastSunday(y, 9);    // October
-    return (check >= bstStart && check < bstEnd) ? 1 : 0;
-  }
-
-  // Returns decimal local hours for every prayer on the given calendar date.
-  function computeDecimalTimes(forDate){
-    const tzOffsetHours = londonOffsetHours(forDate.getFullYear(), forDate.getMonth() + 1, forDate.getDate());
-    const jd = julianDay(forDate.getFullYear(), forDate.getMonth() + 1, forDate.getDate(), 12);
-    const { dec, EqT } = solarPosition(jd);
-    const noonLocal = 12 - LON / 15.0 - EqT / 60.0 + tzOffsetHours;
-    const latR = LAT * Math.PI / 180, decR = dec * Math.PI / 180;
-
-    const sunrise = noonLocal + angleHours(latR, decR, 0.833, true);
-    const fajr    = noonLocal + angleHours(latR, decR, 15, true);
-    const dhuhr   = noonLocal;
-
-    const factor = 2; // Hanafi shadow-length factor — matches Tawakkulia Jamia Masjid's published table
-    const t = factor + Math.tan(Math.abs(latR - decR));
-    const altAsr = Math.atan(1.0 / t) * 180 / Math.PI;
-    const cosHAsr = (Math.sin(altAsr * Math.PI/180) - Math.sin(latR)*Math.sin(decR)) / (Math.cos(latR)*Math.cos(decR));
-    const HAsr = Math.acos(Math.max(-1,Math.min(1,cosHAsr))) * 180 / Math.PI;
-    const asr = noonLocal + HAsr/15.0;
-
-    const maghrib = noonLocal + angleHours(latR, decR, 0.833, false) + 4/60.0;
-    const isha    = noonLocal + angleHours(latR, decR, 10.35, false);
-
-    return { Fajr: fajr, Sunrise: sunrise, Dhuhr: dhuhr, Asr: asr, Maghrib: maghrib, Isha: isha };
+  async function fetchTimings(date){
+    const iso = fmtDateISO(date);
+    const url = `https://api.aladhan.com/v1/timings/${iso}?latitude=${LAT}&longitude=${LON}&method=2&school=1&latitudeAdjustmentMethod=1&timezonestring=${encodeURIComponent(TZ)}`;
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('Prayer time service unavailable');
+    const data = await res.json();
+    return data.data.timings;
   }
 
   function checkEclipseToday(){
@@ -1447,21 +1381,19 @@
       const today = new Date();
       const tomorrow = new Date(today.getTime() + 86400000);
 
-      const d1 = computeDecimalTimes(today);
-      const d2 = computeDecimalTimes(tomorrow);
-      const tz1 = londonOffsetHours(today.getFullYear(), today.getMonth() + 1, today.getDate());
-      const tz2 = londonOffsetHours(tomorrow.getFullYear(), tomorrow.getMonth() + 1, tomorrow.getDate());
+      const [t1, t2] = await Promise.all([fetchTimings(today), fetchTimings(tomorrow)]);
 
-      // Personal calculation rule (Hanbali): Fajr at 18°, Isha at 12°, Asr
-      // using the Hanbali/standard shadow-length factor, with fixed manual
-      // adjustments already folded into computeDecimalTimes() above.
-      const Fajr = hoursToDate(today, d1.Fajr, tz1);
-      const Sunrise = hoursToDate(today, d1.Sunrise, tz1);
-      const Dhuhr = hoursToDate(today, d1.Dhuhr, tz1);
-      const Asr = hoursToDate(today, d1.Asr, tz1);
-      const Maghrib = hoursToDate(today, d1.Maghrib, tz1);
-      const Isha = hoursToDate(today, d1.Isha, tz1);
-      const FajrTomorrow = hoursToDate(tomorrow, d2.Fajr, tz2);
+      // Matched directly to Tawakkulia Jamia Masjid's own published timetable:
+      // 15° for Fajr (ISNA angle), standard solar noon for Dhuhr, Hanafi Asr,
+      // exact sunset for Maghrib, and Isha as their own fixed 60-minute
+      // interval after Maghrib rather than any twilight angle.
+      const Fajr = timeOnDate(today, t1.Fajr);
+      const Sunrise = timeOnDate(today, t1.Sunrise);
+      const Dhuhr = timeOnDate(today, t1.Dhuhr);
+      const Asr = timeOnDate(today, t1.Asr);
+      const Maghrib = timeOnDate(today, t1.Maghrib);
+      const Isha = addMinutes(Maghrib, 60);
+      const FajrTomorrow = timeOnDate(tomorrow, t2.Fajr);
 
       // Determine current/next fard for a subtle highlight
       const now = new Date();
